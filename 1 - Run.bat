@@ -5,7 +5,7 @@ cd /d "%~dp0"
 title UN5 Netplay Launcher
 
 echo ========================================
-echo       UN5 Netplay Launchezr
+echo       UN5 Netplay Launcher
 echo ========================================
 echo.
 
@@ -129,7 +129,7 @@ echo.
 echo Checking Pillow...
 
 %PYTHON_CMD% -c "from PIL import Image, ImageDraw, ImageTk" >nul 2>&1
-if not errorlevel 1 goto RUN_LAUNCHER
+if not errorlevel 1 goto CHECK_CERTIFI
 
 echo Pillow is missing. Installing...
 %PYTHON_CMD% -m pip install --upgrade Pillow
@@ -145,6 +145,18 @@ if errorlevel 1 (
     echo ERROR: Pillow installation could not be verified.
     pause
     exit /b 1
+)
+
+:: ==================================================
+:: CERTIFICATES (certifi): fixes "CERTIFICATE_VERIFY_FAILED"
+:: Installed/updated on every start. Not fatal if it fails (no internet, etc.).
+:: ==================================================
+:CHECK_CERTIFI
+echo.
+echo Updating TLS certificates (certifi)...
+%PYTHON_CMD% -m pip install --upgrade --quiet certifi
+if errorlevel 1 (
+    echo WARNING: Could not update certifi. Continuing anyway...
 )
 
 :RUN_LAUNCHER
