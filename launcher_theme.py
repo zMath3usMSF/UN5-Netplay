@@ -1,0 +1,558 @@
+# -*- coding: utf-8 -*-
+"""Launcher - FRONTEND: cores, estilo ttk e widgets arredondados (cards, botoes pill, campos, switch, slider, avatar)."""
+from __future__ import annotations
+
+import base64
+import io
+import tkinter as tk
+from tkinter import font as tkfont
+from tkinter import ttk
+
+try:                                                          # Pillow (opcional): avatar circular e suave
+    from PIL import Image, ImageDraw, ImageTk
+    _RES = getattr(Image, "Resampling", Image).LANCZOS
+except ImportError:
+    Image = None
+# Bordas anti-serrilhadas exigem Pillow >= 8.2 (ImageDraw.rounded_rectangle); sem isso cai no desenho antigo do Tk.
+_AA = Image is not None and hasattr(ImageDraw.ImageDraw, "rounded_rectangle")
+_K = 4                                                        # fator de supersampling
+
+# Paleta (um pouco mais profunda e com mais contraste entre as camadas)
+BG, PANEL, PANEL_2, BORDER = "#0a0d14", "#121a27", "#1a2536", "#27374f"
+TEXT, MUTED, DIM = "#eef3fb", "#93a3ba", "#5f6e85"
+ACCENT, ACCENT_HI, ON_ACCENT = "#ff8a35", "#ffa764", "#1a1008"
+GREEN, RED, BLUE, WARN = "#44d59a", "#ff6680", "#69aaff", "#ffb24a"
+
+COLORS = {"red": RED, "green": GREEN, "blue": BLUE, "warn": WARN, "muted": MUTED}   # nomes vindos do backend
+
+AVATAR_SCALE = 1.4        # multiplica o tamanho pedido ao criar um AvatarView (use 1.0 para o tamanho antigo)
+AVATAR_RING = 2           # espessura (px) do anel laranja em volta do avatar; 0 = sem anel
+
+
+def apply_style(root):
+    st = ttk.Style(root)
+    try:
+        st.theme_use("clam")
+    except tk.TclError:
+        pass
+    st.configure(".", background=BG, foreground=TEXT, font=("Segoe UI", 10))
+    st.configure("TEntry", fieldbackground=PANEL_2, foreground=TEXT, insertcolor=TEXT, bordercolor=BORDER,
+                 lightcolor=BORDER, darkcolor=BORDER, padding=6)
+    st.configure("Vertical.TScrollbar", background=PANEL_2, troughcolor=PANEL, bordercolor=PANEL,
+                 arrowcolor=MUTED, relief="flat", gripcount=0)
+    st.map("Vertical.TScrollbar", background=[("active", BORDER)])
+    st.configure("Treeview", background=PANEL_2, fieldbackground=PANEL_2, foreground=TEXT, bordercolor=PANEL_2,
+                 borderwidth=0, rowheight=30, font=("Segoe UI", 9))
+    st.configure("Treeview.Heading", background=PANEL_2, foreground=MUTED, borderwidth=0, relief="flat",
+                 font=("Segoe UI", 8, "bold"), padding=(6, 6))
+    st.map("Treeview", background=[("selected", ACCENT)], foreground=[("selected", ON_ACCENT)])
+    st.map("Treeview.Heading", background=[("active", PANEL_2)])
+
+
+# ======================================================================================================================
+# Primitivas de desenho
+# ======================================================================================================================
+def _reset_aa(canvas):
+    """Chamar logo apos apagar o canvas: limita o cache de imagens suaves (a referencia precisa viver no widget)."""
+    if len(canvas.__dict__.get("_aa", ())) > 24:
+        canvas._aa = {}
+
+
+def _aa_pill(canvas, w, h, fill, outline):
+    """PhotoImage de uma capsula anti-serrilhada (desenhada em 4x e reduzida), fundo transparente."""
+    key = (w, h, fill, outline)
+    store = canvas.__dict__.setdefault("_aa", {})
+    img = store.get(key)
+    if img is None:
+        k, W, H = _K, w * _K, h * _K
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=min(W, H) / 2, fill=outline or fill)
+        if outline and min(w, h) > 3:
+            d.rounded_rectangle((k, k, W - 1 - k, H - 1 - k), radius=(min(W, H) - 2 * k) / 2, fill=fill)
+        img = store[key] = ImageTk.PhotoImage(im.resize((w, h), _RES))
+    return img
+
+
+def _pill(canvas, w, h, fill, outline=None, tag=None, x=0, y=0):
+    """Desenha uma capsula (extremidades redondas) de largura w e altura h, com canto superior esquerdo em (x, y).
+    Com Pillow fica anti-serrilhada; sem Pillow usa linhas arredondadas do Tk."""
+    tags = (tag,) if tag else ()
+    if _AA:
+        img = _aa_pill(canvas, max(2, int(round(w))), max(2, int(round(h))), fill, outline)
+        canvas.create_image(int(round(x)), int(round(y)), anchor="nw", image=img, tags=tags)
+        return
+    r = h / 2
+    if outline:
+        canvas.create_line(x + r, y + r, x + max(r, w - r), y + r, width=h, capstyle="round", fill=outline, tags=tags)
+        canvas.create_line(x + r, y + r, x + max(r, w - r), y + r, width=max(1, h - 2), capstyle="round", fill=fill,
+                           tags=tags)
+    else:
+        canvas.create_line(x + r, y + r, x + max(r, w - r), y + r, width=h, capstyle="round", fill=fill, tags=tags)
+
+
+def _disc(canvas, cx, cy, r, fill, outline=None, tag=None):
+    """Circulo (anti-serrilhado com Pillow) centrado em (cx, cy)."""
+    _pill(canvas, 2 * r, 2 * r, fill, outline, tag, x=cx - r, y=cy - r)
+
+
+def _rr(x1, y1, x2, y2, r):
+    """Pontos de um retangulo de cantos arredondados (usar com create_polygon(..., smooth=True))."""
+    return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2,
+            x1, y2 - r, x1, y1 + r, x1, y1]
+
+
+def _parent_bg(parent, default=PANEL):
+    try:
+        return parent.cget("bg")
+    except tk.TclError:
+        return default
+
+
+# ======================================================================================================================
+# Card arredondado (substitui Frame com borda)
+# ======================================================================================================================
+class RoundFrame(tk.Canvas):
+    """Painel de cantos arredondados. Coloque os widgets em `.inner`.
+    stretch=True: o conteudo acompanha a largura do card. grow=True: acompanha tambem a altura (painel que expande).
+    stretch=False: o card se ajusta ao tamanho natural do conteudo (ex.: faixa da conta)."""
+
+    def __init__(self, parent, fill=PANEL, border=BORDER, radius=18, padx=18, pady=16, stretch=True, grow=False,
+                 minwidth=0, bg=None):
+        super().__init__(parent, width=1, height=1, bg=bg or _parent_bg(parent, BG), highlightthickness=0, bd=0)
+        self.fill, self.border, self.radius = fill, border, radius
+        self.px, self.py, self.stretch, self.grow, self.minw = padx, pady, stretch, grow, minwidth
+        self.inner = tk.Frame(self, bg=fill)
+        # (0, 0) e nao (padx, pady): num canvas de 1x1 uma janela fora da area visivel nunca e mapeada, o <Configure>
+        # do inner nunca dispara e o card ficava travado em 1 px. O _on_canvas move para o padding certo depois.
+        self._win = self.create_window(0, 0, window=self.inner, anchor="nw")
+        self.bind("<Configure>", self._on_canvas)
+        self.inner.bind("<Configure>", lambda _e: self._request())
+
+    def _request(self):
+        rw = max(self.minw, self.inner.winfo_reqwidth() + 2 * self.px)
+        rh = self.inner.winfo_reqheight() + 2 * self.py
+        if int(self.cget("width")) != rw or int(self.cget("height")) != rh:
+            self.configure(width=rw, height=rh)
+
+    def sync(self):
+        """Calcula o tamanho agora (usado antes de posicionar janelas)."""
+        self.inner.update_idletasks()
+        self._request()
+        self.update_idletasks()
+
+    def refresh(self):
+        """Recalcula o tamanho natural e redesenha com o tamanho atual do canvas, sem esperar o <Configure>."""
+        self.inner.update_idletasks()
+        self._request()
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        if w > 4 and h > 4:
+            self._on_canvas(type("E", (), {"width": w, "height": h})())
+
+    def _tiles(self, r):
+        """4 cantos anti-serrilhados (tl, tr, bl, br), com borda e preenchimento, fundo transparente."""
+        key = (r, self.fill, self.border)
+        if getattr(self, "_tkey", None) != key:
+            k, S = _K, 2 * r
+            W = S * k
+            im = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            d.rounded_rectangle((0, 0, W - 1, W - 1), radius=r * k, fill=self.border)
+            d.rounded_rectangle((k, k, W - 1 - k, W - 1 - k), radius=max(1, r - 1) * k, fill=self.fill)
+            im = im.resize((S, S), _RES)
+            boxes = ((0, 0, r, r), (r, 0, S, r), (0, r, r, S), (r, r, S, S))
+            self._tk = [ImageTk.PhotoImage(im.crop(bx)) for bx in boxes]
+            self._tkey = key
+        return self._tk
+
+    def _on_canvas(self, e):
+        w, h = max(4, e.width), max(4, e.height)
+        # garante o tamanho natural mesmo se o inner ainda nao foi medido/mapeado
+        self.inner.update_idletasks()
+        self._request()
+        need = self.inner.winfo_reqheight() + 2 * self.py
+        if h >= need - 1 and w > 2 * self.px:
+            self.coords(self._win, self.px, self.py)       # ja ha espaco: posiciona com o padding
+        else:
+            self.coords(self._win, 0, 0)                   # ainda pequeno: mantem visivel ate crescer
+        self.delete("bg")
+        r = int(max(2, min(self.radius, h / 2 - 1, w / 2 - 1)))
+        if _AA and w > 2 * r + 2 and h > 2 * r + 2:
+            tl, tr, bl, br = self._tiles(r)
+            f, b = self.fill, self.border
+            rect = lambda x1, y1, x2, y2, c: self.create_rectangle(x1, y1, x2, y2, fill=c, outline="", tags="bg")
+            rect(r, 1, w - r, h - 1, f)                    # miolo (faixa horizontal)
+            rect(1, r, w - 1, h - r, f)                    # miolo (faixa vertical)
+            rect(r, 0, w - r, 1, b)                        # bordas retas de 1 px
+            rect(r, h - 1, w - r, h, b)
+            rect(0, r, 1, h - r, b)
+            rect(w - 1, r, w, h - r, b)
+            for img, x, y in ((tl, 0, 0), (tr, w - r, 0), (bl, 0, h - r), (br, w - r, h - r)):
+                self.create_image(x, y, anchor="nw", image=img, tags="bg")
+        else:
+            self.create_polygon(_rr(0, 0, w - 1, h - 1, r), smooth=True, fill=self.border, outline=self.border,
+                                tags="bg")
+            self.create_polygon(_rr(1, 1, w - 2, h - 2, max(1, r - 1)), smooth=True, fill=self.fill,
+                                outline=self.fill, tags="bg")
+        self.tag_lower("bg")
+        opts = {}
+        if self.stretch:
+            opts["width"] = max(1, w - 2 * self.px)
+        if self.grow:
+            opts["height"] = max(1, h - 2 * self.py)
+        if opts:
+            self.itemconfigure(self._win, **opts)
+
+
+# ======================================================================================================================
+# Botao pill (totalmente arredondado)
+# ======================================================================================================================
+_BTN = {
+    "TButton": dict(bg=PANEL_2, hover="#26384f", fg=TEXT, border=BORDER, dbg="#131b28", dfg="#4b586b",
+                    font=("Segoe UI Semibold", 9), padx=22, pady=9),
+    "Small.TButton": dict(bg=PANEL_2, hover="#26384f", fg=TEXT, border=BORDER, dbg="#131b28", dfg="#4b586b",
+                          font=("Segoe UI Semibold", 8), padx=15, pady=5),
+    "Accent.TButton": dict(bg=ACCENT, hover=ACCENT_HI, fg=ON_ACCENT, border=ACCENT, dbg="#4f3b2c", dfg="#8a735f",
+                           font=("Segoe UI Semibold", 10), padx=26, pady=12),
+    "Danger.TButton": dict(bg="#47202b", hover="#68283a", fg="#ffd9e0", border="#76303f", dbg="#201219",
+                           dfg="#6d4a53", font=("Segoe UI Semibold", 9), padx=22, pady=9),
+}
+
+
+class PillButton(tk.Canvas):
+    """Botao arredondado: mesmo uso do ttk.Button (text, style, command, state, configure(state=/text=))."""
+
+    def __init__(self, parent, text="", command=None, style="TButton", state="normal", **_ignored):
+        st = _BTN.get(style, _BTN["TButton"])
+        self._st, self._text, self._cmd = st, text, command
+        self._state = "disabled" if state == "disabled" else "normal"
+        self._hover = self._down = False
+        self._font = tkfont.Font(font=st["font"])
+        h = self._font.metrics("linespace") + 2 * st["pady"]
+        super().__init__(parent, width=self._font.measure(text) + 2 * st["padx"], height=h,
+                         bg=_parent_bg(parent), highlightthickness=0, bd=0,
+                         cursor="hand2" if self._state == "normal" else "arrow")
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Enter>", lambda _e: self._set_hover(True))
+        self.bind("<Leave>", lambda _e: self._set_hover(False))
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
+
+    def _set_hover(self, on):
+        self._hover = on
+        if not on:
+            self._down = False
+        self._draw()
+
+    def _press(self, _e):
+        if self._state == "normal":
+            self._down = True
+            self._draw()
+
+    def _release(self, e):
+        was = self._down
+        self._down = False
+        self._draw()
+        if was and self._state == "normal" and 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height():
+            if self._cmd:
+                self._cmd()
+
+    def invoke(self):
+        if self._state == "normal" and self._cmd:
+            self._cmd()
+
+    def _draw(self):
+        self.delete("all")
+        _reset_aa(self)
+        st = self._st
+        w = self.winfo_width() if self.winfo_width() > 4 else int(self.cget("width"))
+        h = self.winfo_height() if self.winfo_height() > 4 else int(self.cget("height"))
+        if self._state == "disabled":
+            fill, fg, border = st["dbg"], st["dfg"], st["dbg"]
+        else:
+            fill = st["hover"] if self._hover and not self._down else st["bg"]
+            fg, border = st["fg"], (ACCENT_HI if self._hover and st["bg"] == ACCENT else st["border"])
+        _pill(self, w, h, fill, border)
+        self.create_text(w / 2, h / 2 + (1 if self._down else 0), text=self._text, fill=fg, font=self._font)
+
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            kw.update(cnf)
+        redraw = False
+        if "state" in kw:
+            self._state = "disabled" if kw.pop("state") == "disabled" else "normal"
+            super().configure(cursor="hand2" if self._state == "normal" else "arrow")
+            redraw = True
+        if "text" in kw:
+            self._text = kw.pop("text")
+            super().configure(width=self._font.measure(self._text) + 2 * self._st["padx"])
+            redraw = True
+        if "command" in kw:
+            self._cmd = kw.pop("command")
+        if "style" in kw:
+            self._st = _BTN.get(kw.pop("style"), _BTN["TButton"])
+            redraw = True
+        if kw:
+            super().configure(**kw)
+        if redraw:
+            self._draw()
+
+    config = configure
+
+
+# ======================================================================================================================
+# Campo de texto arredondado
+# ======================================================================================================================
+class RoundEntry(tk.Canvas):
+    """Campo em capsula. Uso como ttk.Entry: textvariable, show, state ('normal'/'readonly'). `.entry` e o tk.Entry."""
+
+    def __init__(self, parent, textvariable=None, show="", state="normal", font=("Segoe UI", 10), accent=False,
+                 bg=None, **_ignored):
+        self._font = tkfont.Font(font=font)
+        self._hh = self._font.metrics("linespace") + (24 if accent else 20)
+        self._ring = ACCENT if accent else BORDER
+        self._focus = False
+        super().__init__(parent, width=120, height=self._hh, bg=bg or _parent_bg(parent), highlightthickness=0, bd=0)
+        self.entry = tk.Entry(self, textvariable=textvariable, show=show, font=font, bg=PANEL_2, fg=TEXT,
+                              insertbackground=ACCENT, relief="flat", bd=0, highlightthickness=0,
+                              readonlybackground=PANEL_2, disabledbackground=PANEL_2, disabledforeground=DIM,
+                              selectbackground=ACCENT, selectforeground=ON_ACCENT, state=state)
+        self._win = self.create_window(0, 0, window=self.entry, anchor="w")
+        self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
+        self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
+        self.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        self.bind("<Configure>", lambda _e: self._draw())
+
+    def _set_focus(self, on):
+        self._focus = on
+        self._draw()
+
+    def _draw(self):
+        w = self.winfo_width() if self.winfo_width() > 4 else int(self.cget("width"))
+        h = self._hh
+        self.delete("pill")
+        _reset_aa(self)
+        _pill(self, w, h, PANEL_2, ACCENT if self._focus else self._ring, tag="pill")
+        self.tag_lower("pill")
+        pad = int(h * 0.45)
+        self.coords(self._win, pad, h / 2)
+        self.itemconfigure(self._win, width=max(10, w - 2 * pad))
+
+    def get(self):
+        return self.entry.get()
+
+    def focus_set(self):
+        self.entry.focus_set()
+
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            kw.update(cnf)
+        if "state" in kw:
+            self.entry.configure(state=kw.pop("state"))
+        if kw:
+            super().configure(**kw)
+
+    config = configure
+
+
+# ======================================================================================================================
+# Switch e slider arredondados
+# ======================================================================================================================
+class Switch(tk.Canvas):
+    """Interruptor com texto (substitui Checkbutton)."""
+    TX = 64                                              # x onde comeca o texto
+
+    def __init__(self, parent, text, variable, command=None, bg=None):
+        self._font = tkfont.Font(font=("Segoe UI", 9))
+        self._text, self._var, self._cmd = text, variable, command
+        super().__init__(parent, width=self.TX + 4 + self._font.measure(text), height=30,
+                         bg=bg or _parent_bg(parent), highlightthickness=0, bd=0, cursor="hand2")
+        variable.trace_add("write", lambda *_: self._draw())
+        self.bind("<Button-1>", self._toggle)
+        self._draw()
+
+    def _toggle(self, _e):
+        self._var.set(not self._var.get())
+        if self._cmd:
+            self._cmd()
+
+    def _draw(self):
+        if not self.winfo_exists():
+            return
+        self.delete("all")
+        _reset_aa(self)
+        on = bool(self._var.get())
+        cy = 15
+        _pill(self, 52, 24, ACCENT if on else PANEL_2, ACCENT if on else BORDER, x=2, y=3)
+        _disc(self, 42 if on else 14, cy, 8, "#ffffff" if on else MUTED)
+        self.create_text(self.TX, cy, text=self._text, fill=TEXT, font=self._font, anchor="w")
+
+
+class RoundScale(tk.Canvas):
+    """Slider horizontal arredondado (substitui ttk.Scale). command(valor) e chamado ao arrastar."""
+
+    def __init__(self, parent, from_=0.0, to=1.0, variable=None, command=None, bg=None):
+        super().__init__(parent, width=200, height=28, bg=bg or _parent_bg(parent), highlightthickness=0, bd=0,
+                         cursor="hand2")
+        self.lo, self.hi, self.var, self._cmd = float(from_), float(to), variable, command
+        if variable is not None:
+            variable.trace_add("write", lambda *_: self._draw())
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<ButtonPress-1>", self._drag)
+        self.bind("<B1-Motion>", self._drag)
+
+    def _span(self):
+        w = self.winfo_width() if self.winfo_width() > 4 else int(self.cget("width"))
+        return 13, max(14, w - 13), w
+
+    def _drag(self, e):
+        x0, x1, _w = self._span()
+        t = min(1.0, max(0.0, (e.x - x0) / (x1 - x0)))
+        value = self.lo + t * (self.hi - self.lo)
+        if self.var is not None:
+            self.var.set(value)
+        if self._cmd:
+            self._cmd(value)
+
+    def _draw(self):
+        if not self.winfo_exists():
+            return
+        self.delete("all")
+        _reset_aa(self)
+        x0, x1, _w = self._span()
+        cy = 14
+        v = self.var.get() if self.var is not None else self.lo
+        t = min(1.0, max(0.0, (v - self.lo) / ((self.hi - self.lo) or 1)))
+        kx = x0 + t * (x1 - x0)
+        _pill(self, x1 - x0 + 6, 6, PANEL_2, x=x0 - 3, y=cy - 3)
+        _pill(self, max(6, kx - x0 + 6), 6, ACCENT, x=x0 - 3, y=cy - 3)
+        _disc(self, kx, cy, 10, BORDER)
+        _disc(self, kx, cy, 8, ACCENT)
+        _disc(self, kx, cy, 3, ON_ACCENT)
+
+
+# ======================================================================================================================
+# Avatar circular
+# ======================================================================================================================
+def _circle_photo(png, size, bg, ring=AVATAR_RING):
+    """PNG -> avatar circular suave (Pillow). Tudo e desenhado em 4x e reduzido no fim (bordas anti-serrilhadas),
+    com um anel de destaque, e composto sobre a cor de fundo."""
+    k = 4
+    big = size * k
+    rw = ring * k
+    inner = big - 2 * rw
+    img = Image.open(io.BytesIO(png)).convert("RGBA").resize((inner, inner), _RES)   # direto no tamanho final x4
+    base = Image.new("RGBA", (big, big), bg)
+    if ring:
+        ring_layer = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(ring_layer).ellipse((0, 0, big - 1, big - 1), fill=255)
+        base.paste(Image.new("RGBA", (big, big), ACCENT), (0, 0), ring_layer)
+    mask = Image.new("L", (inner, inner), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, inner - 1, inner - 1), fill=255)
+    base.paste(img, (rw, rw), mask)
+    return ImageTk.PhotoImage(base.resize((size, size), _RES).convert("RGB"))
+
+
+class AvatarView(tk.Canvas):
+    """Avatar redondo. O tamanho pedido e multiplicado por AVATAR_SCALE (mais nitido e maior que antes).
+    set(png, letra): foto circular (Pillow) ou inicial num circulo laranja."""
+
+    def __init__(self, parent, size, bg=None):
+        self.size = max(24, int(round(size * AVATAR_SCALE)))
+        self._bg = bg or _parent_bg(parent)
+        self._photo = None
+        super().__init__(parent, width=self.size, height=self.size, bg=self._bg, highlightthickness=0, bd=0)
+        self.set(None, "?")
+
+    def set(self, png, letter="?"):
+        self.delete("all")
+        _reset_aa(self)
+        self._photo = None
+        s = self.size
+        if png:
+            try:
+                if Image is not None:
+                    self._photo = _circle_photo(png, s, self._bg)
+                else:                                          # sem Pillow: quadrado, escala por inteiros
+                    img = tk.PhotoImage(data=base64.b64encode(png))
+                    w = img.width()
+                    img = img.subsample(max(1, round(w / s))) if w > s else img.zoom(max(1, s // w))
+                    self._photo = img
+            except Exception:                                  # noqa: BLE001
+                self._photo = None
+        if self._photo:
+            self.create_image(s / 2, s / 2, image=self._photo)
+            if Image is None:                                  # sem Pillow: "recorta" os cantos com um anel grosso
+                th = s * 0.30
+                R = s / 2 + th / 2
+                c = s / 2
+                self.create_oval(c - R, c - R, c + R, c + R, outline=self._bg, width=th)
+                self.create_oval(1, 1, s - 2, s - 2, outline=ACCENT, width=max(1, AVATAR_RING))
+        else:
+            if _AA:
+                _pill(self, s, s, ACCENT, ACCENT_HI)
+            else:
+                self.create_oval(0, 0, s - 1, s - 1, fill=ACCENT, outline=ACCENT_HI, width=max(1, AVATAR_RING))
+            self.create_text(s / 2, s / 2, text=(letter or "?")[:1].upper(), fill=ON_ACCENT,
+                             font=("Segoe UI", max(8, int(s * 0.42)), "bold"))
+
+
+# ======================================================================================================================
+# Chip e controle segmentado
+# ======================================================================================================================
+class Chip(tk.Frame):
+    """Bolinha colorida + texto curto: verde ok, vermelho faltando, cinza desconhecido."""
+
+    def __init__(self, parent, text="", bg=PANEL):
+        super().__init__(parent, bg=bg)
+        self.dot = tk.Label(self, text="●", bg=bg, fg=DIM, font=("Segoe UI", 10))
+        self.dot.pack(side="left")
+        self.label = tk.Label(self, text=text, bg=bg, fg=MUTED, font=("Segoe UI", 9), anchor="w")
+        self.label.pack(side="left", padx=(5, 0))
+
+    def set(self, ok, text):
+        self.dot.configure(fg=GREEN if ok is True else RED if ok is False else DIM)
+        self.label.configure(text=text, fg=TEXT if ok is True else MUTED)
+
+
+class Segmented(tk.Canvas):
+    """Seletor em capsula: a opcao ativa e uma capsula laranja deslizando sobre a trilha."""
+    HEIGHT = 40
+
+    def __init__(self, parent, options, variable, command=None):
+        super().__init__(parent, width=260, height=self.HEIGHT, bg=_parent_bg(parent), highlightthickness=0, bd=0,
+                         cursor="hand2")
+        self.options, self.variable, self.command = list(options), variable, command
+        self._font = tkfont.Font(font=("Segoe UI", 9, "bold"))
+        variable.trace_add("write", lambda *_: self.refresh())
+        self.bind("<Configure>", lambda _e: self.refresh())
+        self.bind("<Button-1>", self._click)
+        self.refresh()
+
+    def _click(self, e):
+        n = len(self.options)
+        idx = min(n - 1, max(0, int(e.x / max(1, self.winfo_width()) * n)))
+        self.select(self.options[idx][0])
+
+    def select(self, value):
+        self.variable.set(value)
+        self.refresh()
+        if self.command:
+            self.command()
+
+    def refresh(self):
+        if not self.winfo_exists():
+            return
+        self.delete("all")
+        _reset_aa(self)
+        w = self.winfo_width() if self.winfo_width() > 4 else int(self.cget("width"))
+        h = self.HEIGHT
+        _pill(self, w, h, PANEL_2, BORDER)
+        seg = w / len(self.options)
+        for i, (value, text) in enumerate(self.options):
+            on = self.variable.get() == value
+            if on:                                   # capsula ativa, com 4 px de folga
+                pad = 4
+                _pill(self, seg - 2 * pad, h - 2 * pad, ACCENT, x=i * seg + pad, y=pad)
+            self.create_text(i * seg + seg / 2, h / 2, text=text, font=self._font, fill=ON_ACCENT if on else MUTED)

@@ -1,0 +1,237 @@
+# -*- coding: utf-8 -*-
+"""UN5 Netplay - idiomas (English / Portugues BR).
+
+Uso:   from i18n import tr
+       tr("btn.stop")                      -> "STOP" ou "PARAR"
+       tr("log.server", addr="1.2.3.4")    -> texto com {addr} preenchido
+
+Para adicionar um idioma: coloque o codigo em LANGS e acrescente uma coluna em cada entrada de STRINGS.
+Chave que nao existe no idioma atual cai para o ingles; chave que nao existe em lugar nenhum devolve a propria chave.
+"""
+from __future__ import annotations
+
+import os
+
+LANGS = {"en": "English", "pt": "Português (BR)"}      # codigo -> nome mostrado no dropdown
+_ORDER = ("en", "pt")
+_lang = "en"
+
+
+def detect() -> str:
+    """Idioma padrao: portugues se o Windows estiver em pt-*, senao ingles."""
+    name = ""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(85)
+        ctypes.windll.kernel32.GetUserDefaultLocaleName(buf, 85)
+        name = buf.value
+    except Exception:                                  # noqa: BLE001 - nao e Windows
+        name = os.environ.get("LANG", "")
+    return "pt" if name.lower().startswith("pt") else "en"
+
+
+def set_lang(code: str):
+    global _lang
+    if code in LANGS:
+        _lang = code
+
+
+def get_lang() -> str:
+    return _lang
+
+
+def has(key: str) -> bool:
+    return key in STRINGS
+
+
+def tr(key: str, **kw) -> str:
+    entry = STRINGS.get(key)
+    if entry is None:
+        return key
+    text = entry[_ORDER.index(_lang)] or entry[0]
+    return text.format(**kw) if kw else text
+
+
+# chave: (english, portugues)
+STRINGS = {
+    # ---- cabecalho / rodape
+    "lang.label": ("LANGUAGE", "IDIOMA"),
+    "subtitle": ("NARUTO SHIPPUDEN: ULTIMATE NINJA 5  ·  2-PLAYER LOCKSTEP ONLINE",
+                 "NARUTO SHIPPUDEN: ULTIMATE NINJA 5  ·  LOCKSTEP ONLINE PARA 2 JOGADORES"),
+    "footer": ("Both players: same match state, pad 2 connected in PCSX2.  "
+               "One PINE client at a time: close other tools while a session runs.",
+               "Os dois jogadores: mesmo estado da partida e controle 2 conectado no PCSX2.  "
+               "Só um cliente PINE por vez: feche outras ferramentas enquanto uma sessão estiver rodando."),
+    "acct.guest": ("Guest", "Visitante"),
+    "acct.login": ("Discord login ▸", "Login com Discord ▸"),
+    "acct.profile": ("Profile ▸", "Perfil ▸"),
+
+    # ---- console (mensagens iniciais e eventos)
+    "log.server": ("Online server: {addr}", "Servidor online: {addr}"),
+    "log.data": ("Data folder: {path}", "Pasta de dados: {path}"),
+    "log.hint": ("Host or guest: the match state is downloaded from the server for you. Host: START HOST.   "
+                 "Guest: pick the room, then CONNECT.",
+                 "Host ou guest: o estado da partida é baixado do servidor para você. Host: INICIAR HOST.   "
+                 "Guest: escolha a sala e clique em ENTRAR COMO GUEST."),
+    "log.lang": ("Language: English", "Idioma: Português (BR)"),
+    "log.signed_in": ("Signed in as {nick} (Discord).", "Conectado como {nick} (Discord)."),
+    "log.login_not_restored": ("Saved login not restored: {err}",
+                               "Não foi possível restaurar o login salvo: {err}"),
+    "log.signed_out": ("Signed out.", "Sessão encerrada."),
+    "log.could_not_launch": ("could not launch: {exc}", "não foi possível iniciar: {exc}"),
+    "log.stopping": ("asking the session to stop cleanly…", "pedindo para a sessão parar com segurança…"),
+    "log.stopfile": ("could not write the stop file: {exc}", "não foi possível criar o arquivo de parada: {exc}"),
+    "log.forced": ("it did not stop in time: terminating it and releasing the game.",
+                   "não parou a tempo: encerrando o processo e liberando o jogo."),
+    "log.pine_ok": ("PINE answers: PCSX2 is ready.  ", "O PINE respondeu: o PCSX2 está pronto.  "),
+    "log.pine_fail": ("PINE did not answer.  ", "O PINE não respondeu.  "),
+    "log.published": ("Default match state published on the server.",
+                      "Estado padrão da partida publicado no servidor."),
+    "log.publish_fail": ("Could not publish the match state: {msg}",
+                         "Não foi possível publicar o estado da partida: {msg}"),
+    "log.no_output": ("(no output)", "(sem saída)"),
+    "log.copied": ("copied to {dest}  ← this is now the match state",
+                   "copiado para {dest}  ← este agora é o estado da partida"),
+    "log.copy_fail": ("could not copy the state to {dest}: {exc}",
+                      "não foi possível copiar o estado para {dest}: {exc}"),
+    "log.publishing": ("Publishing it as the server's default match state…",
+                       "Publicando como estado padrão da partida no servidor…"),
+    "log.finished": ("finished (exit code {code}).", "finalizado (código de saída {code})."),
+    "log.rooms_err": ("rooms error: {exc}", "erro na lista de salas: {exc}"),
+    "log.ui_err": ("ui error: {exc}", "erro de interface: {exc}"),
+    "log.dl_default": ("Downloading the default {kind} from the server...",
+                       "Baixando o {kind} padrão do servidor..."),
+    "log.nothing_run": ("(nothing was run yet)", "(nada foi executado ainda)"),
+
+    # ---- o que o launcher esta fazendo (linha "▶ ...")
+    "run.prepare": ("Prepare: freezing the match at frame 0 and saving the state",
+                    "Preparar: congelando a partida no frame 0 e salvando o estado"),
+    "run.load": ("Load: putting the match state into PCSX2", "Carregar: colocando o estado da partida no PCSX2"),
+    "run.checking": ("Checking the server's default match state…",
+                     "Verificando o estado padrão da partida no servidor…"),
+    "run.permission": ("Asking the server for permission to join…", "Pedindo permissão ao servidor para entrar…"),
+    "run.host": ("Host: waiting for the guest", "Host: aguardando o guest"),
+    "run.guest": ("Guest: connecting to the host", "Guest: conectando ao host"),
+    "run.ignore_on": ("  (ignore desync ON)", "  (ignorar desync LIGADO)"),
+    "run.solo": ("Solo test (no network), your pad drives {c}", "Teste solo (sem rede), seu controle comanda {c}"),
+    "run.releasing": ("Releasing the game", "Liberando o jogo"),
+    "run.testing_pine": ("Testing PINE…", "Testando o PINE…"),
+
+    # ---- cards
+    "card.match": ("Player & match", "Jogador e partida"),
+    "card.run": ("Run", "Executar"),
+    "playing_as": ("PLAYING AS", "JOGANDO COMO"),
+    "your_role": ("YOUR ROLE", "SEU PAPEL"),
+    "ignore_desync": ("Ignore desync (debug)", "Ignorar desync (debug)"),
+    "note.host": ("Your room is opened on the online server automatically. "
+                  "Only the host detects desyncs, so only the host has the debug switch.",
+                  "Sua sala é aberta no servidor online automaticamente. "
+                  "Só o host detecta desyncs, então só o host tem a opção de debug."),
+    "room.label": ("ROOM  (click a room in the list)", "SALA  (clique em uma sala da lista)"),
+    "note.guest": ("The match state and symbols.json come from the server and are downloaded for you "
+                   "when yours differ.",
+                   "O estado da partida e o symbols.json vêm do servidor e são baixados para você "
+                   "quando os seus forem diferentes."),
+    "note.delay": ("Input delay is automatic: the host picks it from its ping to the server "
+                   "when the room opens; the guest uses the host's value.",
+                   "O input delay é automático: o host escolhe pelo ping até o servidor quando a sala abre; "
+                   "o guest usa o valor do host."),
+    "nick.sub_game": ("Discord  ·  in the game as {shown}", "Discord  ·  no jogo como {shown}"),
+    "nick.sub_default": ("Discord  ·  in the game as Player1 (host) / Player2 (guest)",
+                         "Discord  ·  no jogo como Player1 (host) / Player2 (guest)"),
+    "nick.none": ("Not logged in", "Sem login"),
+    "nick.none_sub": ("Log in with Discord (top right) to show your name and avatar in the room list and in the "
+                      "game. Without it you play as Player1 / Player2.",
+                      "Entre com o Discord (canto superior direito) para mostrar seu nome e avatar na lista de "
+                      "salas e no jogo. Sem login você joga como Player1 / Player2."),
+
+    # ---- botoes
+    "btn.start_host": ("START HOST", "INICIAR HOST"),
+    "btn.start_guest": ("CONNECT AS GUEST", "ENTRAR COMO GUEST"),
+    "btn.stop": ("STOP", "PARAR"),
+    "btn.prepare": ("PREPARE MATCH  (owner only, in a fight)", "PREPARAR PARTIDA  (só o dono, dentro de uma luta)"),
+    "tools": ("Tools", "Ferramentas"),
+    "btn.load": ("LOAD MATCH STATE INTO PCSX2", "CARREGAR ESTADO NO PCSX2"),
+    "btn.solo": ("SOLO TEST", "TESTE SOLO"),
+    "btn.pine": ("TEST PINE", "TESTAR PINE"),
+    "btn.release": ("RELEASE GAME", "LIBERAR O JOGO"),
+    "note.tools": ("Loading overwrites PCSX2 save slot 9. RELEASE GAME hands the real pads back if the game ever "
+                   "stays frozen.",
+                   "Carregar sobrescreve o slot de save 9 do PCSX2. LIBERAR O JOGO devolve os controles reais "
+                   "se o jogo ficar travado."),
+    "btn.clear": ("CLEAR", "LIMPAR"),
+    "btn.copy": ("COPY", "COPIAR"),
+    "btn.copy_cmd": ("COPY COMMAND", "COPIAR COMANDO"),
+    "console": ("CONSOLE", "CONSOLE"),
+
+    # ---- salas
+    "rooms.title": ("ROOMS", "SALAS"),
+    "col.host": ("HOST", "HOST"),
+    "col.guest": ("GUEST", "GUEST"),
+    "col.ping": ("PING", "PING"),
+    "col.status": ("STATUS", "STATUS"),
+    "col.time": ("TIME", "TEMPO"),
+    "rooms.hint": ("Click an open room to pick it, then CONNECT AS GUEST.",
+                   "Clique em uma sala aberta para escolhê-la e depois em ENTRAR COMO GUEST."),
+    "rooms.server_err": ("Server: {err}", "Servidor: {err}"),
+    "rooms.count": ("{n} room(s)", "{n} sala(s)"),
+    "rooms.none": ("No rooms yet. Hosts on the online server appear here by themselves.",
+                   "Nenhuma sala ainda. Os hosts do servidor online aparecem aqui sozinhos."),
+    "room.open": ("open", "aberta"),
+    "room.in_match": ("in match", "em partida"),
+    "phase.select": ("selecting", "selecionando"),
+    "phase.fight": ("in fight", "em luta"),
+
+    # ---- status (canto superior direito)
+    "st.READY": ("READY", "PRONTO"),
+    "st.STARTING": ("STARTING", "INICIANDO"),
+    "st.LOADING": ("LOADING", "CARREGANDO"),
+    "st.WAITING": ("WAITING", "AGUARDANDO"),
+    "st.CONNECTING": ("CONNECTING", "CONECTANDO"),
+    "st.IN MATCH": ("IN MATCH", "EM PARTIDA"),
+    "st.FROZEN": ("FROZEN", "CONGELADO"),
+    "st.DESYNC": ("DESYNC", "DESYNC"),
+
+    # ---- caixas de dialogo
+    "dlg.sstates_title": ("PCSX2 save-state folder", "Pasta de save states do PCSX2"),
+    "dlg.sstates_body": ("The launcher could not find PCSX2's save-state folder by itself.\n\n"
+                         "Choose it now (the 'sstates' folder of your PCSX2). It is remembered.",
+                         "O launcher não encontrou sozinho a pasta de save states do PCSX2.\n\n"
+                         "Escolha-a agora (a pasta 'sstates' do seu PCSX2). Ela fica salva."),
+    "dlg.sstates_pick": ("PCSX2 sstates folder", "Pasta sstates do PCSX2"),
+    "dlg.busy": ("Busy", "Ocupado"),
+    "dlg.cannot_start": ("Cannot start", "Não foi possível iniciar"),
+    "dlg.cannot_continue": ("Cannot continue", "Não foi possível continuar"),
+    "dlg.prepare": ("Prepare", "Preparar"),
+    "dlg.prepare_owner": ("Only the owner (logged in with the owner's Discord account) can prepare the match state.",
+                          "Só o dono (logado com a conta do Discord do dono) pode preparar o estado da partida."),
+    "dlg.rooms": ("Rooms", "Salas"),
+    "dlg.pick_room": ("Click an open room in the list first.", "Clique primeiro em uma sala aberta da lista."),
+    "dlg.default_state": ("Default match state", "Estado padrão da partida"),
+    "dlg.cannot_join": ("Cannot join this room", "Não foi possível entrar nesta sala"),
+    "dlg.cannot_run": ("Cannot run", "Não foi possível executar"),
+    "dlg.pine_missing": ("pine.py not found", "pine.py não encontrado"),
+
+    # ---- erros vindos do launcher_core.py
+    "err.no_state": ("The match state ({name}) was not found. Press PREPARE to make one (owner), or start as "
+                     "host/guest to download the server's.",
+                     "O estado da partida ({name}) não foi encontrado. Use PREPARAR PARTIDA para criar um (dono) "
+                     "ou inicie como host/guest para baixar o do servidor."),
+    "err.pick_room": ("Click an open room in the Rooms list first.",
+                      "Clique primeiro em uma sala aberta da lista de Salas."),
+    "err.state_dir": ("PCSX2's save-state folder was not found. Choose it when the launcher asks.",
+                      "A pasta de save states do PCSX2 não foi encontrada. Escolha-a quando o launcher perguntar."),
+    "err.netplay_missing": ("netplay.py was not found in:\n{project}", "netplay.py não encontrado em:\n{project}"),
+    "err.symbols_missing": ("symbols.json was not found. Run the build (gen_pnach.py) first.",
+                            "symbols.json não encontrado. Rode o build (gen_pnach.py) primeiro."),
+    "err.busy": ("Stop the running session first.", "Pare a sessão em andamento primeiro."),
+    "err.pine_missing": ("pine.py not found in:\n{project}", "pine.py não encontrado em:\n{project}"),
+    "err.no_default": ("The default match state is not on the server yet. The owner has to PREPARE it first.",
+                       "O estado padrão da partida ainda não está no servidor. O dono precisa preparar (PREPARE) "
+                       "primeiro."),
+    "err.corrupt": ("The downloaded file is corrupted. Try again.",
+                    "O arquivo baixado está corrompido. Tente de novo."),
+    "err.dl_http": ("Download failed (server error {code}).", "Falha no download (erro {code} do servidor)."),
+    "err.dl_fail": ("Download failed ({why}).", "Falha no download ({why})."),
+    "err.no_kind": ("The server has no default {kind} yet.", "O servidor ainda não tem o {kind} padrão."),
+}

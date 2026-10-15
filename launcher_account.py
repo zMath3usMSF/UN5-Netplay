@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""UN5 Netplay - janelas da conta (login com Discord e perfil). Usadas pelo launcher.py."""
+from __future__ import annotations
+
+import time
+import tkinter as tk
+
+from i18n import tr
+from discord_auth import account_game_nick
+from launcher_theme import ACCENT, BG, DIM, GREEN, PANEL, RED, TEXT, AvatarView, PillButton, RoundFrame
+
+
+class _Dialog(tk.Toplevel):
+    def __init__(self, app, title, width=380):
+        super().__init__(app)
+        self.app, self.buttons = app, []
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(app)
+        card = RoundFrame(self, radius=20, padx=20, pady=18, minwidth=width)
+        card.pack(fill="both", expand=True, padx=14, pady=14)
+        self.card, self.body = card, card.inner
+        self.msg = tk.Label(self.body, text="", bg=PANEL, fg=DIM, font=("Segoe UI", 9), wraplength=width - 50,
+                            justify="left", anchor="w")
+        app.dialog = self
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.bind("<Escape>", lambda _e: self.close())
+
+    def present(self):
+        self.card.sync()
+        self.update_idletasks()
+        a = self.app
+        x = a.winfo_x() + (a.winfo_width() - self.winfo_width()) // 2
+        y = a.winfo_y() + (a.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def close(self):
+        if self.app.dialog is self:
+            self.app.dialog = None
+        self.destroy()
+
+    def button(self, parent, text, command, style="TButton"):
+        b = PillButton(parent, text=text, command=command, style=style)
+        self.buttons.append(b)
+        return b
+
+    def say(self, text, color=DIM):
+        self.msg.configure(text=text, fg=color)
+
+    def busy(self, on):
+        for b in self.buttons:
+            b.configure(state="disabled" if on else "normal")
+
+    def on_result(self, op, ok, err):
+        pass
+
+
+class DiscordDialog(_Dialog):
+    """Entrar com o Discord: abre o navegador e espera o servidor confirmar."""
+
+    def __init__(self, app):
+        super().__init__(app, tr("dlg.login_title"))
+        tk.Label(self.body, text=tr("dc.title"), bg=PANEL, fg=TEXT, font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(self.body, text=tr("dc.intro"), bg=PANEL, fg=DIM,
+                 font=("Segoe UI", 8), wraplength=330, justify="left").pack(anchor="w", pady=(2, 10))
+        self.msg.pack(fill="x", pady=(4, 0))
+        self.go = self.button(self.body, tr("dc.continue"), self.submit, "Accent.TButton")
+        self.go.pack(fill="x", pady=(12, 0))
+        self.copy = PillButton(self.body, text=tr("dc.copy"), style="Small.TButton", command=self.copy_link)
+        self.bind("<Return>", lambda _e: self.submit())
+        self.present()
+
+    def submit(self):
+        self.app.backend.acct_login_discord()
+        self.busy(True)
+        self.say(tr("dc.finish"))
+        self.copy.pack(fill="x", pady=(8, 0))
+        self.present()
+
+    def copy_link(self):
+        self.app._clip(self.app.backend.login_url)
+        self.say(tr("dc.copied"), GREEN)
+
+    def close(self):
+        self.app.backend.acct_cancel_login()
+        super().close()
+
+    def on_result(self, op, ok, err):
+        if op != "login":
+            return
+        self.busy(False)
+        if ok:
+            self.app._log(tr("log.signed_in", nick=self.app.backend.account["nick"]), "success")
+            self.close()
+        else:
+            self.copy.pack_forget()
+            self.say(str(err), RED)
+            self.present()
+
+
+class ProfileDialog(_Dialog):
+    """Mostra a conta do Discord (nick e avatar vem de la) e deixa sair."""
+
+    def __init__(self, app):
+        super().__init__(app, tr("pf.title"), width=400)
+        acc = app.backend.account
+        top = tk.Frame(self.body, bg=PANEL)
+        top.pack(fill="x")
+        self.av = AvatarView(top, 52, bg=PANEL)
+        self.av.pack(side="left")
+        info = tk.Frame(top, bg=PANEL)
+        info.pack(side="left", padx=(14, 0))
+        tk.Label(info, text=acc["nick"], bg=PANEL, fg=TEXT, font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        if acc.get("username"):
+            tk.Label(info, text=f"@{acc['username']}  ·  Discord", bg=PANEL, fg=ACCENT,
+                     font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        since = time.strftime("%Y-%m-%d", time.localtime(acc.get("created", 0)))
+        tk.Label(info, text=tr("pf.since", date=since), bg=PANEL, fg=DIM, font=("Segoe UI", 8)).pack(anchor="w")
+        self.av.set(app.backend.avatar_png, acc["nick"][:1])
+
+        in_game = account_game_nick(acc) or tr("pf.default_name")
+        tk.Label(self.body, text=tr("pf.in_game", name=in_game), bg=PANEL, fg=TEXT,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 0))
+        tk.Label(self.body, text=tr("pf.note"), bg=PANEL, fg=DIM, font=("Segoe UI", 8), wraplength=350,
+                 justify="left").pack(anchor="w", pady=(4, 0))
+        self.msg.pack(fill="x", pady=(10, 0))
+        self.button(self.body, tr("pf.signout"), self.logout, "Danger.TButton").pack(fill="x", pady=(10, 0))
+        self.present()
+
+    def logout(self):
+        self.busy(True)
+        self.app.backend.acct_logout()
+
+    def on_result(self, op, ok, err):
+        if not self.app.backend.account:                 # saiu ou a sessao expirou
+            self.close()
