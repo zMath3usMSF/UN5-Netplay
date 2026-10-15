@@ -5,7 +5,7 @@ cd /d "%~dp0"
 title UN5 Netplay Launcher
 
 echo ========================================
-echo       UN5 Netplay Launchezr
+echo       UN5 Netplay Launcher
 echo ========================================
 echo.
 
