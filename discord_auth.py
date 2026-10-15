@@ -12,6 +12,8 @@ servidor. O launcher recebe um token de sessao + nick/avatar do Discord e guarda
 from __future__ import annotations
 
 import json
+import os
+import socket
 import ssl
 import threading
 import time
@@ -29,13 +31,53 @@ POLL_EVERY = 1.5
 UA = "UN5Netplay/1.0"
 
 
-def ssl_context():
-    """Contexto HTTPS com o pacote do certifi (nao depende do repositorio de certificados do Windows)."""
+_TLS_HOST = os.environ.get("UN5_TLS_HOST", "un5netplay.duckdns.org")      # UN5_PATCH_TLS
+_TLS_CACHE = {}
+
+
+def _tls_candidates():
+    """Repositorio do sistema (Windows) primeiro, depois o pacote do certifi."""
+    out = []
+    try:
+        out.append(ssl.create_default_context())
+    except Exception:                                   # noqa: BLE001
+        pass
     try:
         import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:                                   # noqa: BLE001 - sem certifi: o padrao do Python
-        return ssl.create_default_context()
+        out.append(ssl.create_default_context(cafile=certifi.where()))
+    except Exception:                                   # noqa: BLE001
+        pass
+    return out or [ssl.create_default_context()]
+
+
+def _tls_accepts(ctx, host, port=443):
+    """True = certificado aceito, False = recusado, None = nao deu para testar (sem rede)."""
+    try:
+        with socket.create_connection((host, port), timeout=6) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host):
+                return True
+    except ssl.SSLCertVerificationError:
+        return False
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def ssl_context(host=None):
+    """Contexto HTTPS que funciona mesmo com o certifi desatualizado."""
+    if os.environ.get("UN5_INSECURE_TLS") == "1":       # opt-in, so diagnostico
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    host = host or _TLS_HOST
+    if host in _TLS_CACHE:
+        return _TLS_CACHE[host]
+    cands = _tls_candidates()
+    for ctx in cands:
+        if _tls_accepts(ctx, host) is True:
+            _TLS_CACHE[host] = ctx
+            return ctx
+    return cands[0]
 
 
 class AccountError(Exception):
