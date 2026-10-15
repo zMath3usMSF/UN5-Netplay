@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import socket
+import ssl
 import threading
 import time
 from urllib.parse import quote
@@ -19,6 +20,15 @@ DEFAULT_PORT = 47500
 
 class ServerError(Exception):
     pass
+
+
+def ssl_context():
+    """Contexto HTTPS com o pacote do certifi (nao depende do repositorio de certificados do Windows)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:                                   # noqa: BLE001 - sem certifi: o padrao do Python
+        return ssl.create_default_context()
 
 
 # ---- server address ----------------------------------------------------------------------------------------------
@@ -145,8 +155,10 @@ class Api:
         self.timeout = timeout
 
     def _conn(self, timeout=None):
-        cls = http.client.HTTPSConnection if self.https else http.client.HTTPConnection
-        return cls(self.host, self.port, timeout=timeout or self.timeout)
+        if self.https:
+            return http.client.HTTPSConnection(self.host, self.port, timeout=timeout or self.timeout,
+                                               context=ssl_context())
+        return http.client.HTTPConnection(self.host, self.port, timeout=timeout or self.timeout)
 
     def _req(self, method, path, body=None):
         conn = self._conn()

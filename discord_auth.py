@@ -12,6 +12,7 @@ servidor. O launcher recebe um token de sessao + nick/avatar do Discord e guarda
 from __future__ import annotations
 
 import json
+import ssl
 import threading
 import time
 import unicodedata
@@ -26,6 +27,15 @@ PNG_SIG = b"\x89PNG\r\n\x1a\n"
 AVATAR_MAX = 2 * 1024 * 1024
 POLL_EVERY = 1.5
 UA = "UN5Netplay/1.0"
+
+
+def ssl_context():
+    """Contexto HTTPS com o pacote do certifi (nao depende do repositorio de certificados do Windows)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:                                   # noqa: BLE001 - sem certifi: o padrao do Python
+        return ssl.create_default_context()
 
 
 class AccountError(Exception):
@@ -63,7 +73,7 @@ def api_call(server, method, path, body=None, token="", timeout=8.0) -> dict:
     base = server if server.startswith(("http://", "https://")) else f"http://{server}"
     req = urllib.request.Request(f"{base.rstrip('/')}{path}", data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -79,7 +89,8 @@ def fetch_avatar(url: str) -> bytes:
     if not str(url).startswith(CDN_PREFIX):
         raise AccountError("Unexpected avatar address.")
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=8) as resp:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=8,
+                                    context=ssl_context()) as resp:
             data = resp.read(AVATAR_MAX + 1)
     except (urllib.error.URLError, OSError) as exc:
         raise AccountError(f"Could not download the avatar ({getattr(exc, 'reason', exc)}).") from None

@@ -53,7 +53,7 @@ from pathlib import Path
 
 from i18n import tr
 from appdata import CONFIG_FILE, DATA_DIR, STATE_NAME, STATE_PATH, SYMBOLS_PATH      # noqa: F401
-from discord_auth import (UA, AccountError, DiscordMixin, account_game_nick, api_call,   # noqa: F401
+from discord_auth import (UA, ssl_context, AccountError, DiscordMixin, account_game_nick, api_call,   # noqa: F401
                           fetch_avatar)
 
 HERE = Path(__file__).resolve().parent
@@ -570,7 +570,7 @@ class Backend(DiscordMixin):
         digest = hashlib.sha256()
         req = urllib.request.Request(f"{SERVER_URL}{path}", headers={"User-Agent": UA})
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp, open(tmp, "wb") as f:
+            with urllib.request.urlopen(req, timeout=30, context=ssl_context()) as resp, open(tmp, "wb") as f:
                 while True:
                     chunk = resp.read(1 << 20)
                     if not chunk:
@@ -628,7 +628,7 @@ class Backend(DiscordMixin):
                         f"{SERVER_URL}/default/{kind}", data=Path(path).read_bytes(), method="PUT",
                         headers={"User-Agent": UA, "Authorization": "Bearer " + token,
                                  "Content-Type": "application/octet-stream"})
-                    with urllib.request.urlopen(req, timeout=180) as resp:
+                    with urllib.request.urlopen(req, timeout=180, context=ssl_context()) as resp:
                         resp.read()
                 self.q.put(("publish", True, ""))
             except urllib.error.HTTPError as exc:
