@@ -22,13 +22,54 @@ class ServerError(Exception):
     pass
 
 
-def ssl_context():
-    """Contexto HTTPS com o pacote do certifi (nao depende do repositorio de certificados do Windows)."""
+def _tls_candidates():
+    """Contextos TLS a tentar, em ordem: repositorio do sistema (Windows) e depois o pacote do certifi."""
+    out = []
+    try:
+        out.append(ssl.create_default_context())
+    except Exception:                                   # noqa: BLE001
+        pass
     try:
         import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:                                   # noqa: BLE001 - sem certifi: o padrao do Python
-        return ssl.create_default_context()
+        out.append(ssl.create_default_context(cafile=certifi.where()))
+    except Exception:                                   # noqa: BLE001
+        pass
+    return out or [ssl.create_default_context()]
+
+
+_TLS_CACHE = {}                                         # UN5_PATCH_TLS
+
+
+def _tls_handshake(ctx, host, port):
+    """True = certificado aceito, False = recusado pelo certificado, None = nao deu para testar (rede)."""
+    try:
+        with socket.create_connection((host, port), timeout=6) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host):
+                return True
+    except ssl.SSLCertVerificationError:
+        return False
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def ssl_context(host=None, port=443):
+    """Contexto HTTPS que funciona mesmo com certifi desatualizado: testa o do sistema e o do certifi."""
+    if os.environ.get("UN5_INSECURE_TLS") == "1":       # opt-in, so para diagnostico
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    cands = _tls_candidates()
+    if not host:
+        return cands[0]
+    key = (host, port)
+    if key in _TLS_CACHE:
+        return _TLS_CACHE[key]
+    for ctx in cands:
+        if _tls_handshake(ctx, host, port) is not False:
+            _TLS_CACHE[key] = ctx
+            return ctx
+    return cands[0]
 
 
 # ---- server address ----------------------------------------------------------------------------------------------
@@ -157,7 +198,7 @@ class Api:
     def _conn(self, timeout=None):
         if self.https:
             return http.client.HTTPSConnection(self.host, self.port, timeout=timeout or self.timeout,
-                                               context=ssl_context())
+                                               context=ssl_context(self.host, self.port))
         return http.client.HTTPConnection(self.host, self.port, timeout=timeout or self.timeout)
 
     def _req(self, method, path, body=None):
