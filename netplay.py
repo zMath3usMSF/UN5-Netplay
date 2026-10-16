@@ -108,8 +108,8 @@ GAME_SERIAL = 'SLES-55605'
 SYNC_HASH_BITS = {'none': 0, 'sel': 4, 'seq': 8, 'both': 12}   # bits 2-3 of NpSync.rng_mode (see netpad_core.h)
 RNG_SITE_BIT = 16                                              # bit 4 of NpSync.rng_mode: one rand stream per call site
 
-LAN_DELAY = 3                                          # automatic delay when there is no server to measure against
-AUTO_DELAY_MIN, AUTO_DELAY_MAX = 3, 10                 # clamp of the automatic delay (frames)
+LAN_DELAY = max(1, int(os.environ.get('UN5_LAN_DELAY', '2')))   # UN5_PATCH_DELAY
+AUTO_DELAY_MIN, AUTO_DELAY_MAX = max(1, int(os.environ.get('UN5_DELAY_MIN', '2'))), 10   # UN5_PATCH_DELAY
 
 
 def describe_watch(value, code):

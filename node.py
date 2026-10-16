@@ -18,6 +18,7 @@ older than the newest one it applied, so a delayed / reordered datagram can neve
 Tick barrier (--tick-barrier, OFF by default): compares the game counters of both players on the same network frame and
 parks the PC that is ahead for a short time. It is experimental; the lockstep is deterministic without it.
 """
+import os
 import random
 import select
 import socket
@@ -45,7 +46,7 @@ TICK_HOLD_MAX = 0.15                 # seconds a tick-barrier hold (hold = 2) ma
 FRAME_MS = 1000.0 / 30.0        # Ultimate Ninja 5 runs its fight logic at 30 frames per second (measured)
 
 
-def delay_for_rtt(rtt_ms, frame_ms=FRAME_MS, margin=1):
+def delay_for_rtt(rtt_ms, frame_ms=FRAME_MS, margin=int(os.environ.get('UN5_DELAY_MARGIN', '0'))):  # UN5_PATCH_DELAY
     """Input delay in frames that hides half the round trip: one frame costs 33 ms here, so a 100 ms RTT needs 3."""
     import math
     return max(1, int(math.ceil(rtt_ms / 2.0 / frame_ms)) + margin)
