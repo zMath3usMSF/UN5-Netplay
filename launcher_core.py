@@ -59,7 +59,7 @@ from discord_auth import (UA, ssl_context, AccountError, DiscordMixin, account_g
 HERE = Path(__file__).resolve().parent
 SERVER_URL = "https://un5netplay.duckdns.org"          # API (salas, conta, save state): HTTPS pelo Caddy
 SERVER_ADDR = "137.131.158.54:47500"                   # UDP (descoberta e relay): NAO passa pelo Caddy
-HOST_PORT = "47400"                                    # porta UDP local do host (fixa, sem campo na tela)                               # porta UDP local do host (fixa, sem campo na tela)
+HOST_PORT = "47400"                                    # porta UDP local do host (fixa, sem campo na tela)
 GUEST_BIND_PORT = "0"                                  # porta UDP local do guest (0 = automatica)
 AUTO_DELAY = "0"                                       # --delay 0 = o netplay.py escolhe sozinho
 SOLO_DELAY = "3"                                       # solo nao tem rede: nada para medir
@@ -88,6 +88,37 @@ FIXED = dict(pine_slot="28011", save_slot="1", load_slot="9", auto_copy=True, au
 # ======================================================================================================================
 # Configuracao
 # ======================================================================================================================
+# ---- jogos suportados (CRC do disco, lido do PCSX2 via PINE)
+UN5_CRC = "C071D4C1"                                   # UN5 original
+UN6_CRC = "688C83D6"                                   # UN6 (mod do UN5), ultima versao
+GAMES = {UN5_CRC: "un5", UN6_CRC: "un6"}
+
+
+def game_paths(game: str):
+    """(estado da partida, symbols.json) locais de cada jogo. O UN5 usa os arquivos de sempre; o UN6 tem os proprios."""
+    if game == "un6":
+        return STATE_PATH.with_name("UN6-partida.p2s"), SYMBOLS_PATH.with_name("symbols_un6.json")
+    return STATE_PATH, SYMBOLS_PATH
+
+
+def game_q(game: str) -> str:
+    """Parametro de URL que escolhe o save state / symbols do jogo no servidor (UN5 = padrao, sem parametro)."""
+    return "?game=un6" if game == "un6" else ""
+
+
+def detect_game(pine_slot):
+    """Le o CRC do jogo aberto no PCSX2 (PINE). Retorna (jogo, crc): jogo = "un5" | "un6" | None (desconhecido).
+    Levanta PineError / OSError se o PCSX2 nao responder."""
+    from pine import Pine
+    client = Pine(int(pine_slot), timeout=3.0)
+    try:
+        client.connect()
+        crc = client.game_crc()
+    finally:
+        client.close()
+    return GAMES.get(crc), crc
+
+
 def load_config() -> dict:
     cfg = dict(DEFAULTS)
     try:   # chaves antigas (project_dir, symbols_path, hash_mask, delay, session, nick, ...) sao ignoradas
@@ -104,18 +135,23 @@ def save_config(cfg: dict):
         pass
 
 
-def full_config(user: dict, admin: bool = False) -> dict:
+def full_config(user: dict, admin: bool = False, game: str = "un5") -> dict:
     """Configuracao do usuario + tudo que e fixo ou detectado sozinho (pasta do projeto, symbols, estado, python,
     pasta de save do PCSX2). E o dicionario que o resto do backend espera.
     `admin` (o dono): usa o symbols.json do proprio build. Os demais usam sempre o que baixaram do servidor."""
     cfg = {**FIXED, **user}
     cfg["project_dir"] = str(HERE)
     cfg["python_exe"] = default_python()
-    if not admin and SYMBOLS_PATH.is_file():
+    cfg["game"] = game
+    state_p, sym_p = game_paths(game)
+    if game == "un6":                                     # UN6: symbols e estado proprios
+        own = next((p for p in (HERE / "symbols_un6.json", HERE / "symbols.json") if p.is_file()), None)
+        cfg["symbols_path"] = str(own if (admin and own) else sym_p)
+    elif not admin and SYMBOLS_PATH.is_file():
         cfg["symbols_path"] = str(SYMBOLS_PATH)           # o symbols.json do servidor
     else:
         cfg["symbols_path"] = str(find_symbols(HERE) or SYMBOLS_PATH)
-    cfg["state_file"] = str(find_state(HERE) or STATE_PATH)
+    cfg["state_file"] = str(state_p if game == "un6" else (find_state(HERE) or STATE_PATH))
     sdir = str(user.get("state_dir", "")).strip()
     if not (sdir and Path(sdir).expanduser().is_dir()):
         found = find_sstates_dir()
@@ -587,7 +623,7 @@ class Backend(DiscordMixin):
         finally:
             tmp.unlink(missing_ok=True)
 
-    def sync_default(self):
+    def sync_default(self, game="un5"):
         """Baixa o save state (e o symbols.json, se nao for o dono) do servidor quando o local for diferente.
         Roda em thread; evento: ("sync", ok, texto)."""
         admin = self.is_admin()
@@ -595,12 +631,13 @@ class Backend(DiscordMixin):
         def work():
             try:
                 try:
-                    info = api_call(SERVER_URL, "GET", "/default")
+                    info = api_call(SERVER_URL, "GET", "/default" + game_q(game))
                 except AccountError as exc:
                     if exc.code == 404:
                         raise AccountError(tr("err.no_default")) from None
                     raise
-                wanted = [("state", STATE_PATH)] + ([] if admin else [("symbols", SYMBOLS_PATH)])
+                state_p, sym_p = game_paths(game)
+                wanted = [("state", state_p)] + ([] if admin else [("symbols", sym_p)])
                 for kind, dest in wanted:
                     want = info.get(kind)
                     if not want:
@@ -608,7 +645,7 @@ class Backend(DiscordMixin):
                     local = state_tag(dest) if dest.is_file() else ""
                     if local != want:
                         self.q.put(("line", tr("log.dl_default", kind=kind)))
-                        self._download(f"/default/{kind}", dest, want)
+                        self._download(f"/default/{kind}{game_q(game)}", dest, want)
                 self.q.put(("sync", True, ""))
             except AccountError as exc:
                 self.q.put(("sync", False, str(exc)))
@@ -616,16 +653,21 @@ class Backend(DiscordMixin):
                 self.q.put(("sync", False, str(exc)))
         threading.Thread(target=work, daemon=True).start()
 
-    def publish_default(self):
+    def publish_default(self, game="un5"):
         """So o dono: sobe o symbols.json e o estado recem-criado para o servidor. Evento: ("publish", ok, texto)."""
         token = self.session
-        symbols = find_symbols(HERE) or SYMBOLS_PATH
+        state_p, sym_p = game_paths(game)
+        if game == "un6":
+            own = next((p for p in (HERE / "symbols_un6.json", HERE / "symbols.json") if p.is_file()), None)
+            symbols = own if own else sym_p
+        else:
+            symbols = find_symbols(HERE) or SYMBOLS_PATH
 
         def work():
             try:
-                for kind, path in (("symbols", symbols), ("state", STATE_PATH)):
+                for kind, path in (("symbols", symbols), ("state", state_p)):
                     req = urllib.request.Request(
-                        f"{SERVER_URL}/default/{kind}", data=Path(path).read_bytes(), method="PUT",
+                        f"{SERVER_URL}/default/{kind}{game_q(game)}", data=Path(path).read_bytes(), method="PUT",
                         headers={"User-Agent": UA, "Authorization": "Bearer " + token,
                                  "Content-Type": "application/octet-stream"})
                     with urllib.request.urlopen(req, timeout=180, context=ssl_context()) as resp:

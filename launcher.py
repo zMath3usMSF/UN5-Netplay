@@ -74,6 +74,7 @@ class Launcher(tk.Tk):
 
         self.backend = core.Backend()                     # carrega a sessao do Discord salva no AppData
         self.dialog = None
+        self.game = "un5"                                 # jogo detectado pelo CRC (ver _pick_game)
         self._after_sync = None                           # o que fazer quando o download do save padrao terminar
         self._after_allow = None
         self.rooms_data: dict = {}
@@ -103,7 +104,7 @@ class Launcher(tk.Tk):
 
     def cfg(self) -> dict:
         """Escolhas da tela + tudo que e fixo/detectado (core.full_config) + o nick do perfil do Discord."""
-        cfg = core.full_config(self.raw(), self.backend.is_admin())
+        cfg = core.full_config(self.raw(), self.backend.is_admin(), getattr(self, "game", "un5"))
         acc = self.backend.account
         cfg["nick"] = core.account_game_nick(acc) if acc else ""
         return cfg
@@ -361,7 +362,8 @@ class Launcher(tk.Tk):
         wrap.pack(fill="both", expand=True)
         sb = ttk.Scrollbar(wrap, orient="vertical")
         cols = (("guest", tr("col.guest"), 200, 150), ("ping", tr("col.ping"), 76, 70),
-                ("status", tr("col.status"), 120, 110), ("time", tr("col.time"), 64, 60))
+                ("status", tr("col.status"), 120, 110), ("time", tr("col.time"), 64, 60),
+                ("game", tr("col.game"), 64, 56))
         self.rooms_tree = ttk.Treeview(wrap, columns=[c[0] for c in cols], show="tree headings", height=8,
                                        selectmode="browse",
                                        yscrollcommand=lambda lo, hi: self._rooms_scrolled(sb, lo, hi))
@@ -424,6 +426,30 @@ class Launcher(tk.Tk):
         if hasattr(self, "start_btn"):
             self.start_btn.configure(text=tr("btn.start_guest") if guest else tr("btn.start_host"))
 
+    def _detect_game(self):
+        """Le o CRC do jogo aberto no PCSX2 (PINE). Retorna "un5" / "un6", ou None (o aviso ja foi mostrado)."""
+        try:
+            game, crc = core.detect_game(core.FIXED["pine_slot"])
+        except Exception as exc:                          # noqa: BLE001 - PCSX2 fechado, PINE desligado, etc.
+            self._log(tr("log.game_pine", exc=exc), "error")
+            messagebox.showerror(tr("dlg.game_title"), tr("dlg.game_pine", exc=exc))
+            return None
+        if game is None:
+            self._log(tr("log.game_unknown", crc=crc or "?"), "error")
+            messagebox.showerror(tr("dlg.game_title"),
+                                 tr("dlg.game_unknown", crc=crc or "?", un5=core.UN5_CRC, un6=core.UN6_CRC))
+            return None
+        self._log(tr("log.game_ok", game=game.upper(), crc=crc), "info")
+        return game
+
+    def _pick_game(self) -> bool:
+        """Detecta o jogo e guarda em self.game (usado por cfg(): save state e symbols de cada jogo)."""
+        game = self._detect_game()
+        if game is None:
+            return False
+        self.game = game
+        return True
+
     def _ensure_state_dir(self) -> bool:
         """A pasta de save do PCSX2 e achada sozinha. So se isso falhar o launcher pergunta (uma vez, fica salva)."""
         if Path(self.cfg()["state_dir"] or "?").is_dir():
@@ -467,7 +493,8 @@ class Launcher(tk.Tk):
             time_txt = f"{s // 60:02d}:{s % 60:02d}"
         else:
             time_txt = "—"
-        values = (GUEST_PAD + (guest.get("nick") or "—"), ping_txt, status.upper(), time_txt)
+        values = (GUEST_PAD + (guest.get("nick") or "—"), ping_txt, status.upper(), time_txt,
+                  str(r.get("game") or "—").upper())
         return (host.get("nick") or r.get("nick") or "?", self._avatar_image(host.get("avatar_url")), values, ())
 
     def _guest_img(self, r):
@@ -628,12 +655,18 @@ class Launcher(tk.Tk):
     def prepare(self):
         if not self.backend.is_admin():
             return messagebox.showinfo(tr("dlg.prepare"), tr("dlg.prepare_owner"))
+        if not self._ensure_state_dir():
+            return
+        if not self._pick_game():
+            return
         args = self._args("prepare")
         if args:
             self._spawn(args, tr("run.prepare"))
 
     def load_state(self):
         if not self._ensure_state_dir():
+            return
+        if not self._pick_game():
             return
         args = self._args("load", self.cfg()["state_file"])
         if args:
@@ -643,18 +676,25 @@ class Launcher(tk.Tk):
         if not self._ensure_state_dir():
             return
         role = self.v["mode"].get()
+        if not self._pick_game():
+            return
         if role == "guest":
             room = self._picked_room()
             if room is None:
                 return messagebox.showinfo(tr("dlg.rooms"), tr("dlg.pick_room"))
             self.v["room_id"].set(room["id"])
+        if role == "guest":                               # a sala tem que ser do mesmo jogo que esta no PCSX2
+            rg = (self.rooms_data.get(self.v["room_id"].get()) or {}).get("game")
+            if rg and rg != self.game:
+                return messagebox.showerror(tr("dlg.game_title"),
+                                            tr("dlg.game_mismatch", room=rg.upper(), mine=self.game.upper()))
         # primeiro baixa o save state padrao do servidor (se o local for diferente); depois sobe a sessao
         self._after_sync = lambda: self._launch(role)
         self._log("\n▶ " + tr("run.checking"), "info")
         self._set_status("LOADING", BLUE)
         self._set_buttons(True)
         self.stop_btn.configure(state="disabled")
-        self.backend.sync_default()
+        self.backend.sync_default(self.game)
 
     def _launch(self, role):
         if role == "guest":                               # the server decides first (same IP / same account)
@@ -678,6 +718,8 @@ class Launcher(tk.Tk):
         self._spawn(args, label, allow_missing_symbols=(role == "guest"))
 
     def solo(self):
+        if not self._pick_game():
+            return
         args = self._args("solo")
         if args:
             self._spawn(args, tr("run.solo", c=self.v["control"].get()))
@@ -787,7 +829,7 @@ class Launcher(tk.Tk):
     def _adopt_saved_state(self, saved: Path):
         """O estado que o PREPARE acabou de salvar vira UN5-partida.p2s na pasta de saves do AppData e, se a conta
         logada for a do dono, e publicado no servidor como o save state padrao."""
-        dest = core.STATE_PATH
+        dest = core.game_paths(self.game)[0]
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(saved, dest)
@@ -796,7 +838,7 @@ class Launcher(tk.Tk):
         self._log(tr("log.copied", dest=dest), "success")
         if self.backend.is_admin():
             self._log(tr("log.publishing"), "info")
-            self.backend.publish_default()
+            self.backend.publish_default(self.game)
 
     def _on_exit(self, code):
         self._log(tr("log.finished", code=code), "success" if code in (0, None) else "error")

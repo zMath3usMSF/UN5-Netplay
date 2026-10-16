@@ -182,6 +182,28 @@ STRINGS = {
     "phase.select": ("selecting", "selecionando"),
     "phase.fight": ("in fight", "em luta"),
 
+    # ---- jogo (UN5 / UN6, pelo CRC)
+    "col.game": ("GAME", "JOGO"),
+    "log.game_ok": ("Game detected: {game} (CRC {crc}).", "Jogo detectado: {game} (CRC {crc})."),
+    "log.game_pine": ("Could not read the game from PCSX2: {exc}",
+                      "Não foi possível ler o jogo no PCSX2: {exc}"),
+    "log.game_unknown": ("Unknown game (CRC {crc}).", "Jogo desconhecido (CRC {crc})."),
+    "dlg.game_title": ("Game check", "Verificação do jogo"),
+    "dlg.game_pine": ("Could not read the game's CRC from PCSX2 (PINE):\n\n{exc}\n\n"
+                      "Open PCSX2 with the game running and PINE enabled.",
+                      "Não foi possível ler o CRC do jogo no PCSX2 (PINE):\n\n{exc}\n\n"
+                      "Abra o PCSX2 com o jogo rodando e o PINE ligado."),
+    "dlg.game_unknown": ("Unknown game (CRC {crc}).\n\n"
+                         "UN5 must be the original game, with CRC {un5}.\n"
+                         "UN6 must be on its latest version, with CRC {un6}.",
+                         "Jogo desconhecido (CRC {crc}).\n\n"
+                         "O UN5 precisa ser o original, com o CRC {un5}.\n"
+                         "O UN6 precisa estar na última versão, com o CRC {un6}."),
+    "dlg.game_mismatch": ("This room is {room}, but the game open in PCSX2 is {mine}. "
+                          "Open the right game and try again.",
+                          "Esta sala é de {room}, mas o jogo aberto no PCSX2 é {mine}. "
+                          "Abra o jogo certo e tente de novo."),
+
     # ---- status (canto superior direito)
     "st.READY": ("READY", "PRONTO"),
     "st.STARTING": ("STARTING", "INICIANDO"),

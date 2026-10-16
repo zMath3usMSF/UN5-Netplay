@@ -107,6 +107,13 @@ class Pine:
         n = int.from_bytes(data[:4], 'little')
         return data[4:4 + n].split(b'\0')[0].decode('ascii', 'replace')
 
+    def game_crc(self):
+        """CRC do jogo aberto, como o PCSX2 mostra (PINE MsgUUID, 0xD), ex.: 'C071D4C1'."""
+        data = self._transact(bytes([0xD]))
+        n = int.from_bytes(data[:4], 'little')
+        crc = data[4:4 + n].split(b'\0')[0].decode('ascii', 'replace').strip().upper()
+        return crc[2:] if crc.startswith('0X') else crc
+
     def save_state(self, slot):
         self._transact(bytes([SAVE_STATE, slot]))
 
